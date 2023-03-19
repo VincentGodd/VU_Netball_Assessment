@@ -101,9 +101,7 @@ Activity_DF <- Df_Details %>% filter(Statistic == "minutesPlayed"| # Relative
 Activity_DF <- Activity_DF %>% pivot_wider(names_from = Statistic, values_from = Total) %>% 
   group_by(Athlete,Poste_played) %>% 
   replace(is.na(.), 0) %>% 
-  summarise(
-    
-            minutesPlayed = max(minutesPlayed),
+  summarise(minutesPlayed = max(minutesPlayed),
             disposals = max(disposals),
             Bad_Disposal = sum(badPasses+interceptPassThrown),
             deflections = max(deflections),
@@ -131,8 +129,8 @@ library(ggpubr) # package to add regression label on the chart
 ggplot(data = Activity_DF, mapping = aes(x = gain , y = Gain_corrected))+
   geom_point() +
   geom_smooth(method=lm) +
-  stat_regline_equation(label.x=15, label.y=150) + # allow
-  stat_cor(method = "pearson", label.x = 15, label.y = 140)+
+  stat_regline_equation(label.x=15, label.y=150) + # allowed to show regression equation
+  stat_cor(method = "pearson", label.x = 15, label.y = 140)+ #R2 idem
   labs(title = "Graph 0 : Correlation between 'Gain' variable and 'Corrected Value'")
 
 
@@ -140,10 +138,10 @@ ggplot(data = Activity_DF, mapping = aes(x = gain , y = Gain_corrected))+
 library(scales) 
 # Fonction Kmeans clustering :
 library(stats) 
-
 # because scale can't take df with non numeric variable, we have to create new df :
 df <- data.frame(Activity_DF$Def_Act, Activity_DF$Off_Act) %>% scale()
-kn3 <- kmeans(df, centers = 3, nstart = 25)
+#We need to scale df because ifnot we can't use kmeans fonction:
+kn3 <- kmeans(df, centers = 3, nstart = 25) # I chose 3 clusters
 df2 <- data.frame( Athlete_Name = Activity_DF$Athlete,
                    Clusters =kn3$cluster,
                    Activity_Def = Activity_DF$Def_Act,
@@ -159,6 +157,7 @@ p1 <- ggplot(data = df2, mapping = aes(x=Activity_DF$Def_Act,y=Activity_DF$Off_A
       labs(title = "Graph 1 : Offensive and Defensive Activity ")
 ggplotly(p1)
 
+# Special plot with the package factoextra, to draw cluster on the graph:
 fviz_cluster(kn3, data = df,palette = "Set2", ggtheme = theme_minimal()) +
   labs(title = "Graph 2 : Athlete Clustering - Offensive and Defensive Activity ",
          subtitle = "Clustering by Kmeans",
@@ -186,16 +185,17 @@ NB : the activity data is expressed in number of offensive or defensive actions 
 
 ```{r ATTAQUE VIEW, warning=FALSE, cache =FALSE, message=FALSE}
 
+# Creat Top3 filter on the offencive activity variable:
 df3 <- df2 %>% group_by(Clusters) %>%  mutate(top3_thresold = ifelse(rank(-Activity_Off)<=3,"TRUE","FALSE"))
 
-library(formattable)
+library(formattable) # package to design table
 formattable(df3, align =c("l","c","c","c","c","c"),
             Athlete_Name = formatter("span", style = ~ style(color = "black",font.weight = "bold")),
             # Colors choose for colour-blind person
              list(Efficiency_Def = color_bar("#00FF00"),
                   Efficiency_Att = color_bar("#03fc77")))
 
-library(ggrepel)
+library(ggrepel) # package to manage label in the graph
 P2 <- ggplot(data = df3, mapping = aes(x = Efficiency_Att, y = Activity_Off)) +
   geom_point(aes(color = Clusters)) +
   facet_wrap(. ~ Clusters,scales = "free")+
@@ -224,6 +224,7 @@ In order to remain one of the best defenses in the league, it would be interesti
 
 ```{r BEST , warning=FALSE, cache =FALSE, message=FALSE}
 
+# Creat filtred dataframe with the top players
 df4 <- df3 %>% filter(Athlete_Name =="Garbin, S"|
                       Athlete_Name =="Fowler, J"|
                       Athlete_Name =="Wallace, S")
