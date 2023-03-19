@@ -1,0 +1,51 @@
+---
+title: "Data Analysis - Netball"
+author: "Vincent GODDELIERE"
+date: "2023-03-16"
+output: 
+  html_document: 
+    code_folding: hide
+---
+# Netball DataBase Varaibles Description :
+
+Quelques détails sur les données, passons en revue les colonnes spécifiques lorsque vous ouvrez l'ensemble de données :
+
+1. **Athlète** = Cette colonne contient les noms des athlètes individuels dans l'ensemble de données. Ces noms sont au format "Nom de famille, Initiale"
+
+2. **Statistic** = Ce sont des statistiques de netball différentes, capturées pour chaque joueur.
+
+3. **Équipe** = Cette colonne fait référence à l'une des huit équipes pour laquelle l'athlète joue.
+
+4. **Total** = Il s'agit du total de la statistique. Par exemple, le nombre total de tentatives depuis la Zone 1, ou le nombre total de buts, ou le nombre total de minutes jouées.
+
+--------------
+
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Chart A
+
+```{r}
+
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Chart B
+
+```{r}
+
+```
+
+### Chart C
+
+```{r}
+
+```
+

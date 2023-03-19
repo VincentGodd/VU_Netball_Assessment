@@ -1,0 +1,252 @@
+---
+title: "Data analysis for recruitment support - Netball"
+author: "Vincent GODDELIERE"
+date: "2023-03-17"
+output: 
+  html_document: 
+    code_folding: hide
+---
+# Fixtive Story : 
+
+**We are looking for the best player available for our team. We need a central position player with main offensive qualities. Defensive qualities are secondary, as we already have one of the best defences in the league.**
+
+### Netball DataBase Variables Description:
+
+Some details about the data, let's review the specific columns when you open the dataset:
+
+1. **Athlete** = Names of individual athletes in the dataset. These names are in the format "Surname, Initial"
+
+2. **Statistic** = These are different netball stats captured for each player.
+
+3. **Team** = This column refers to one of the eight teams the athlete is playing for.
+
+4. **Total** = Total of the statistic. For example, the total number of attempts from Zone 1, or the total number of goals, or the total number of minutes played.
+
+--------------
+
+
+```{r setup, R.options-knitr::opts_chunkSset(warnings-FALSE, message-FALSE, fig.width-12, fig. height-8)}
+```
+
+## Analysis of Center position : Scoring and Performance Analysis
+
+For this analysis, we focused on a general analysis of the following positions: Goal defender, Wing defender, Centre, Wing attack, Goal attack. 
+
+NB : In order to fill the lack of data concerning the specific positions of the players (moreover, I do not know this sport at all), we assume in this analysis that all the central positions are one unique position category.
+
+### Variables Definitions :
+
+It is necessary to express the playing time data in order to make a relevant comparison.
+
+**Activité Offencive**  : cumul of disposals season divided by minutes played.
+
+**Activité Defencive** : cumul gains (defections + interceps) divided by minutes played.
+
+**Postes** : Who he is ? Goal Shooter = 1, Goal Keeper = 2, Other Positions = 0, (filter positions).
+
+```{r Packages and Data Import ,warning=FALSE,cache=FALSE,message=FALSE}
+
+# Loading packages :
+library(flexdashboard)
+library(tidyverse)
+library(viridis)
+library(ggplot2)
+library(plotly)
+library(readxl)
+library(DT)
+library(stats)
+library(factoextra)
+
+# Import Raw Data :
+DataSet <- read.csv("Data/Dataset3_Assessment3.csv")
+
+# Import Characterization Table .xls :
+Variable_ID <- read_excel("Data/Variables_Details.xlsx")
+
+# Cleaning of the DataSet :
+Clean_Df <- DataSet %>% mutate(Statistic = str_replace(Statistic,"attempt_from_zone1","attempts1"),
+         Statistic = str_replace(Statistic,"attempt_from_zone2","attempts2"),
+         Statistic = str_replace(Statistic,"goal_from_zone1","goal1"),
+         Statistic = str_replace(Statistic,"goal_from_zone2","goal2")) %>% 
+  filter(!Total == 0)
+
+# Merge two Dataframe in One fusion :
+Df_Details <- merge(Clean_Df, Variable_ID, by.x ="Statistic", by.y ="Variables",all = TRUE)
+
+# Remove Na because some Statistic variable aren't present in DataSet :
+Df_Details <- Df_Details %>% drop_na() %>% 
+  # Who is a shooter or not ? Goal Shooter =1, Goal Keeper = 2, Other Positions = 0
+  mutate(Poste_played = ifelse(Statistic =="goalAttempts" & Total > 0,1,
+                             ifelse(Statistic =="blocks" & Total > 0,2,0)))
+
+```
+
+
+
+### Are there differences in game profiles within the same overall position ?
+
+```{r Positions Analysis, warning=FALSE, cache =FALSE, message=FALSE}
+
+# Activity Variables in a Dataframe filtered :
+Activity_DF <- Df_Details %>% filter(Statistic == "minutesPlayed"| # Relative
+                               Statistic == "disposals"| # Attaque +
+                               Statistic == "badPasses"| # Attaque -
+                               Statistic == "interceptPassThrown"| # Attaque -
+                               Statistic == "deflections"| # Defense +
+                               Statistic == "gain"| # Defense +
+                               Statistic == "obstructionPenalties"|  
+                               Statistic == "intercepts") # Defense +
+
+# Pivot Table to observe the dependence between variable and choose the good one for this analysis :
+Activity_DF <- Activity_DF %>% pivot_wider(names_from = Statistic, values_from = Total) %>% 
+  group_by(Athlete,Poste_played) %>% 
+  replace(is.na(.), 0) %>% 
+  summarise(
+    
+            minutesPlayed = max(minutesPlayed),
+            disposals = max(disposals),
+            Bad_Disposal = sum(badPasses+interceptPassThrown),
+            deflections = max(deflections),
+            obstructionPenalties = max(obstructionPenalties),
+            gain = max(gain),
+            intercepts = max(intercepts),
+            Gain_corrected = sum(deflections + intercepts),
+          
+            # e.g, you can have 2 disposal but 4 Bad, that's mean the calculation of disposal don't count bad tentative, so Full_Disposal :
+            Full_Disposal = sum(Bad_Disposal+disposals), 
+            Efficiency_Att = round((Full_Disposal - Bad_Disposal)/Full_Disposal,2),
+            Full_Deff_Actions = sum(obstructionPenalties+Gain_corrected),
+            Efficiency_Def = round((Full_Deff_Actions - obstructionPenalties)/Full_Deff_Actions,2)) %>% 
+  
+  mutate(Def_Act = round(Gain_corrected/minutesPlayed*4*15,1),
+  Off_Act = round(disposals/minutesPlayed*4*15,1)) 
+
+# We fixe a thresold of 3match for this analysis to have a more representative sample :
+Activity_DF <- Activity_DF %>% filter(minutesPlayed>180)
+
+
+# Gain and Gain_corrected are different ?
+library(ggpubr) # package to add regression label on the chart
+
+ggplot(data = Activity_DF, mapping = aes(x = gain , y = Gain_corrected))+
+  geom_point() +
+  geom_smooth(method=lm) +
+  stat_regline_equation(label.x=15, label.y=150) + # allow
+  stat_cor(method = "pearson", label.x = 15, label.y = 140)+
+  labs(title = "Graph 0 : Correlation between 'Gain' variable and 'Corrected Value'")
+
+
+# Profil - Comparaison demande poste en activities offensive et def :
+library(scales) 
+# Fonction Kmeans clustering :
+library(stats) 
+
+# because scale can't take df with non numeric variable, we have to create new df :
+df <- data.frame(Activity_DF$Def_Act, Activity_DF$Off_Act) %>% scale()
+kn3 <- kmeans(df, centers = 3, nstart = 25)
+df2 <- data.frame( Athlete_Name = Activity_DF$Athlete,
+                   Clusters =kn3$cluster,
+                   Activity_Def = Activity_DF$Def_Act,
+                   Activity_Off = Activity_DF$Off_Act,
+                   Efficiency_Def = Activity_DF$Efficiency_Def,
+                   Efficiency_Att = Activity_DF$Efficiency_Att)
+
+# Plots :
+p1 <- ggplot(data = df2, mapping = aes(x=Activity_DF$Def_Act,y=Activity_DF$Off_Act)) +
+      geom_point() +
+      geom_label(mapping = aes(label = Activity_DF$Athlete))+
+      labs(y = "Offensive Activity (Actions per 60min = 1game)", x = "Defencive Activity (per 60min = 1game)") +
+      labs(title = "Graph 1 : Offensive and Defensive Activity ")
+ggplotly(p1)
+
+fviz_cluster(kn3, data = df,palette = "Set2", ggtheme = theme_minimal()) +
+  labs(title = "Graph 2 : Athlete Clustering - Offensive and Defensive Activity ",
+         subtitle = "Clustering by Kmeans",
+         caption = "This Chart highligth 3 categories : Defencive domination, Offensive Domination and Mixt Profil.") # Title design
+
+```
+
+### Interpretations :
+
+NB : the activity data is expressed in number of offensive or defensive actions per match unit. The metrix  was expressed in relation to the athletes time played and expressed in count per match (4*15min) in order to facilitate the understanding of the values.
+
+1. **Graph 0** : in view of the differences between the calculated "Gain" variable and the "Corrected Gain" variable which follows the basic evaluation calculation (sum of passes and shots). It seems relevant to consider the "Corrected gain" variable for the further analysis.
+
+2. **Graph 1** : shows the groupings of athletes with dominantly defensive, dominantly offensive or mixed activities.
+
+3. **Graph 2** : classifies the different athletes into three distinct clusters using the Kmeans method. The data appears to be grouped as "mixed activity", "attack dominated activity", "defense dominated activity"
+
+**NB : the most interesting profile for our recruitment is therefore the profile named "attack dominated activity"!**
+
+
+## Player's Profitability by clusters model activity :
+
+**Profitability** is the balance between the amount of work the player does and his efficiency. Having a player with a lot of game action but little efficiency is not interesting for us. Similarly, if a player is very efficient but does not do much in the game, then he does not affect the dynamics of the game.
+
+
+```{r ATTAQUE VIEW, warning=FALSE, cache =FALSE, message=FALSE}
+
+df3 <- df2 %>% group_by(Clusters) %>%  mutate(top3_thresold = ifelse(rank(-Activity_Off)<=3,"TRUE","FALSE"))
+
+library(formattable)
+formattable(df3, align =c("l","c","c","c","c","c"),
+            Athlete_Name = formatter("span", style = ~ style(color = "black",font.weight = "bold")),
+            # Colors choose for colour-blind person
+             list(Efficiency_Def = color_bar("#00FF00"),
+                  Efficiency_Att = color_bar("#03fc77")))
+
+library(ggrepel)
+P2 <- ggplot(data = df3, mapping = aes(x = Efficiency_Att, y = Activity_Off)) +
+  geom_point(aes(color = Clusters)) +
+  facet_wrap(. ~ Clusters,scales = "free")+
+  geom_label_repel(aes(label = ifelse(top3_thresold, as.character(Athlete_Name),"")))+
+  labs(title = "Graph 3 : Offensive Analysis - Efficiency vs Acticity ",
+         subtitle = "Find the best player per profil, which player is working most efficiently ?",
+         caption = "Performance is a balance between work and efficiency !")
+P2
+
+```
+
+### Interpretations :
+
+This graph shows the balance between the player's activity during the season, but also his efficiency. This allows us to determine which player has done the most work efficiently. In this case, we are concerned with evaluating the quality of our players on the **offensive activity**.
+
+TOP 3: Price, Nankivell and Jovic, are the best performing players in the Kmean category "Mixed activity",
+
+**TOP 3**: Garbin, Fowler and Wallace, are the best performing players in the Kmean category **"Attacking dominance activity"**,
+
+TOP 3: Mannix, Delaney and Sterling, are the best performing players in the Kmean category "Defending dominance activity".
+
+**Finally, for our team, the most relevant choices seem : Garbin, Fowler and Wallace!**
+
+## And about defense ?
+In order to remain one of the best defenses in the league, it would be interesting that our player is a minimum of faculty in the defensive system...
+
+```{r BEST , warning=FALSE, cache =FALSE, message=FALSE}
+
+df4 <- df3 %>% filter(Athlete_Name =="Garbin, S"|
+                      Athlete_Name =="Fowler, J"|
+                      Athlete_Name =="Wallace, S")
+
+P3 <- ggplot(data = df4, mapping = aes(x = Efficiency_Def, y = Activity_Def)) +
+  geom_col(aes(fill = Athlete_Name)) +
+  scale_fill_viridis_d()+
+  labs(title = "Graph 4 : TOP 3 players in Attack ",
+         subtitle = "which one are the best defender ?",
+         caption = " WE HAVE TO CALL Garbin,S!")
+P3
+
+```
+
+### Interpretations :
+
+This graph shows the profitability of the top 3 players isolated as mentioned above. This allows us to determine which player has done the most work efficiently balance. In this case, we focused on the **defensive activity**.
+
+
+# 📢 WE WANT GARBIN,S !!!! 📢
+
+This player fits our needs best. In addition to his offensive activity of 62 actions per game with an efficiency of 95%. He also knows how to be efficient in a defensive system with 3 actions per game, 93% efficiency 💪🏽.
+
+
+
+

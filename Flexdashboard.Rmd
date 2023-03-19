@@ -1,0 +1,200 @@
+---
+title: "Data analysis for recruitment support - Netball"
+output: 
+  flexdashboard::flex_dashboard:
+    storyboard: true # Attention pas d'espace sinon ca ne fonctionne pas !
+---
+
+```{r setup}
+# Loading packages :
+library(flexdashboard)
+library(tidyverse)
+library(viridis)
+library(ggplot2)
+library(plotly)
+library(readxl)
+library(DT)
+library(stats)
+library(factoextra)
+
+# Import Raw Data :
+DataSet <- read.csv("Data/Dataset3_Assessment3.csv")
+
+# Import Characterization Table .xls :
+Variable_ID <- read_excel("Data/Variables_Details.xlsx")
+
+# Cleaning of the DataSet :
+Clean_Df <- DataSet %>% mutate(Statistic = str_replace(Statistic,"attempt_from_zone1","attempts1"),
+         Statistic = str_replace(Statistic,"attempt_from_zone2","attempts2"),
+         Statistic = str_replace(Statistic,"goal_from_zone1","goal1"),
+         Statistic = str_replace(Statistic,"goal_from_zone2","goal2")) %>% 
+  filter(!Total == 0)
+
+# Merge two Dataframe in One fusion :
+Df_Details <- merge(Clean_Df, Variable_ID, by.x ="Statistic", by.y ="Variables",all = TRUE)
+
+# Remove Na because some Statistic variable aren't present in DataSet :
+Df_Details <- Df_Details %>% drop_na() %>% 
+  # Who is a shooter or not ? Goal Shooter =1, Goal Keeper = 2, Other Positions = 0
+  mutate(Poste_played = ifelse(Statistic =="goalAttempts" & Total > 0,1,
+                             ifelse(Statistic =="blocks" & Total > 0,2,0)))
+```
+
+
+
+### Are there differences in game profiles within the same overall position ?
+
+```{r sheet 1}
+# Activity Variables in a Dataframe filtered :
+Activity_DF <- Df_Details %>% filter(Statistic == "minutesPlayed"| # Relative
+                               Statistic == "disposals"| # Attaque +
+                               Statistic == "badPasses"| # Attaque -
+                               Statistic == "interceptPassThrown"| # Attaque -
+                               Statistic == "deflections"| # Defense +
+                               Statistic == "gain"| # Defense +
+                               Statistic == "obstructionPenalties"|  
+                               Statistic == "intercepts") # Defense +
+
+# Pivot Table to observe the dependence between variable and choose the good one for this analysis :
+Activity_DF <- Activity_DF %>% pivot_wider(names_from = Statistic, values_from = Total) %>% 
+  group_by(Athlete,Poste_played) %>% 
+  replace(is.na(.), 0) %>% 
+  summarise(
+    
+            minutesPlayed = max(minutesPlayed),
+            disposals = max(disposals),
+            Bad_Disposal = sum(badPasses+interceptPassThrown),
+            deflections = max(deflections),
+            obstructionPenalties = max(obstructionPenalties),
+            gain = max(gain),
+            intercepts = max(intercepts),
+            Gain_corrected = sum(deflections + intercepts),
+          
+            # e.g, you can have 2 disposal but 4 Bad, that's mean the calculation of disposal don't count bad tentative, so Full_Disposal :
+            Full_Disposal = sum(Bad_Disposal+disposals), 
+            Efficiency_Att = round((Full_Disposal - Bad_Disposal)/Full_Disposal,2),
+            Full_Deff_Actions = sum(obstructionPenalties+Gain_corrected),
+            Efficiency_Def = round((Full_Deff_Actions - obstructionPenalties)/Full_Deff_Actions,2)) %>% 
+  
+  mutate(Def_Act = round(Gain_corrected/minutesPlayed*4*15,1),
+  Off_Act = round(disposals/minutesPlayed*4*15,1)) 
+
+# We fixe a thresold of 3match for this analysis to have a more representative sample :
+Activity_DF <- Activity_DF %>% filter(minutesPlayed>180)
+
+# Profil - Comparaison demande poste en activities offensive et def :
+library(scales) 
+# Fonction Kmeans clustering :
+library(stats) 
+
+# because scale can't take df with non numeric variable, we have to create new df :
+df <- data.frame(Activity_DF$Def_Act, Activity_DF$Off_Act) %>% scale()
+kn3 <- kmeans(df, centers = 3, nstart = 25)
+df2 <- data.frame( Athlete_Name = Activity_DF$Athlete,
+                   Clusters =kn3$cluster,
+                   Activity_Def = Activity_DF$Def_Act,
+                   Activity_Off = Activity_DF$Off_Act,
+                   Efficiency_Def = Activity_DF$Efficiency_Def,
+                   Efficiency_Att = Activity_DF$Efficiency_Att)
+
+# Plots :
+p1 <- ggplot(data = df2, mapping = aes(x=Activity_DF$Def_Act,y=Activity_DF$Off_Act)) +
+      geom_point(aes(color=Athlete_Name)) +
+      geom_label(mapping = aes(label = Activity_DF$Athlete))+
+      labs(y = "Offensive Activity (Actions per 60min = 1game)", x = "Defencive Activity (per 60min = 1game)") +
+      labs(title = "Graph 1 : Offensive and Defensive Activity ")
+ggplotly(p1)
+
+```
+
+*** 
+## FIXTIVE STORY :
+
+**We are looking for the best player available for our team. We need a central position player with main offensive qualities. Defensive qualities are secondary, as we already have one of the best defences in the league.**
+
+
+### Clusters ?
+
+```{r sheet2}
+
+fviz_cluster(kn3, data = df,palette = "Set2", ggtheme = theme_minimal()) +
+  labs(title = "Graph 2 : Athlete Clustering - Offensive and Defensive Activity ",
+         subtitle = "Clustering by Kmeans",
+         caption = "This Chart highligth 3 categories : Defencive domination, Offensive Domination and Mixt Profil.") # Title design
+
+```
+
+***
+
+
+It is necessary to express the playing time data in order to make a relevant comparison.
+
+**Activité Offencive**  : cumul of disposals season divided by minutes played.
+
+**Activité Defencive** : cumul gains (defections + interceps) divided by minutes played.
+
+
+
+
+This graph classifies the different athletes into three distinct clusters using the Kmeans method. The data appears to be grouped as "mixed activity", "attack dominated activity", "defense dominated activity"
+
+
+### profitability of the player in attack ?
+
+```{r sheet3}
+
+df3 <- df2 %>% group_by(Clusters) %>%  mutate(top3_thresold = ifelse(rank(-Activity_Off)<=3,"TRUE","FALSE"))
+
+library(ggrepel)
+P2 <- ggplot(data = df3, mapping = aes(x = Efficiency_Att, y = Activity_Off)) +
+  geom_point(aes(color = Clusters)) +
+  facet_wrap(. ~ Clusters,scales = "free")+
+  geom_label_repel(aes(label = ifelse(top3_thresold, as.character(Athlete_Name),"")))+
+  labs(title = "Graph 3 : Offensive Analysis - Efficiency vs Acticity ",
+         subtitle = "Find the best player per profil, which player is working most efficiently ?",
+         caption = "Performance is a balance between work and efficiency !")
+P2
+
+```
+
+***
+
+
+
+**Profitability** is the balance between the amount of work the player does and his efficiency. Having a player with a lot of game action but little efficiency is not interesting for us. Similarly, if a player is very efficient but does not do much in the game, then he does not affect the dynamics of the game.
+
+
+
+TOP 3: Price, Nankivell and Jovic, are the best performing players in the Kmean category "Mixed activity",
+
+**TOP 3**: Garbin, Fowler and Wallace, are the best performing players in the Kmean category **"Attacking dominance activity"**,
+
+TOP 3: Mannix, Delaney and Sterling, are the best performing players in the Kmean category "Defending dominance activity".
+
+**Finally, for our team, the most relevant choices seem : Garbin, Fowler and Wallace!**
+
+
+### And about defense ?
+
+```{r sheet4}
+
+df4 <- df3 %>% filter(Athlete_Name =="Garbin, S"|
+                      Athlete_Name =="Fowler, J"|
+                      Athlete_Name =="Wallace, S")
+
+P3 <- ggplot(data = df4, mapping = aes(x = Efficiency_Def, y = Activity_Def)) +
+  geom_col(aes(fill = Athlete_Name)) +
+  scale_fill_viridis_d()+
+  labs(title = "Graph 4 : TOP 3 players in Attack ",
+         subtitle = "which one are the best defender ?",
+         caption = " WE HAVE TO CALL Garbin,S!")
+P3
+
+```
+
+***
+This graph shows the profitability of the top 3 players isolated as mentioned above. This allows us to determine which player has done the most work efficiently balance. In this case, we focused on the **defensive activity**.
+
+📢 WE WANT GARBIN,S !!!!
+
+This player fits our needs best. In addition to his offensive activity of 62 actions per game with an efficiency of 95%. He also knows how to be efficient in a defensive system with 3 actions per game, 93% efficiency 💪🏽.
